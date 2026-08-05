@@ -121,7 +121,7 @@ export const EMBEDDING_MODELS = {
 export const DEFAULT_PROVIDER_MODELS = {
   "github-copilot": "text-embedding-3-small",
   "openai": "text-embedding-3-small",
-  "google": "gemini-embedding-001",
+  "google": "gemini-embedding-2",
   "ollama": "nomic-embed-text",
 } as const;
 

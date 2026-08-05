@@ -87,8 +87,7 @@ describe("config schema", () => {
       expect(config.scope).toBe("project");
       expect(config.include).toHaveLength(DEFAULT_INCLUDE.length);
       expect(config.exclude).toHaveLength(DEFAULT_EXCLUDE.length);
-      expect(config.indexing.pauseBackgroundIndexingOnBattery).toBe(false);
-      expect(config.search.communityBoost).toBe(0);
+      expect(config.indexing.pauseBackgroundIndexingOnBattery).toBe(true);
     });
 
     it("parses and clamps the opt-in community ranking boost", () => {
@@ -102,7 +101,9 @@ describe("config schema", () => {
       const config = parseConfig(null);
 
       expect(config.embeddingProvider).toBe("auto");
-      expect(config.indexing.autoIndex).toBe(false);
+      expect(config.indexing.autoIndex).toBe(true);
+      expect(config.indexing.autoIndexMinIntervalMs).toBe(30_000);
+      expect(config.indexing.autoIndexMaxChangedFiles).toBe(250);
     });
 
     it("should return defaults for non-object input", () => {
@@ -216,7 +217,8 @@ describe("config schema", () => {
 
         expect(config.indexing.autoIndex).toBe(true);
         expect(config.indexing.watchFiles).toBe(false);
-        expect(config.indexing.pauseBackgroundIndexingOnBattery).toBe(true);
+      expect(config.indexing.pauseBackgroundIndexingOnBattery).toBe(true);
+      expect(config.search.communityBoost).toBe(0);
         expect(config.indexing.semanticOnly).toBe(true);
         expect(config.indexing.autoGc).toBe(false);
       });
@@ -230,9 +232,9 @@ describe("config schema", () => {
           },
         });
 
-        expect(config.indexing.autoIndex).toBe(false);
+        expect(config.indexing.autoIndex).toBe(true);
         expect(config.indexing.watchFiles).toBe(true);
-        expect(config.indexing.pauseBackgroundIndexingOnBattery).toBe(false);
+        expect(config.indexing.pauseBackgroundIndexingOnBattery).toBe(true);
       });
 
       it("should parse numeric indexing options", () => {
@@ -270,8 +272,24 @@ describe("config schema", () => {
       });
 
       it("should handle non-object indexing", () => {
-        expect(parseConfig({ indexing: "invalid" }).indexing.autoIndex).toBe(false);
-        expect(parseConfig({ indexing: null }).indexing.autoIndex).toBe(false);
+        expect(parseConfig({ indexing: "invalid" }).indexing.autoIndex).toBe(true);
+        expect(parseConfig({ indexing: null }).indexing.autoIndex).toBe(true);
+      });
+
+      it("should parse and clamp autoIndexMinIntervalMs", () => {
+        expect(parseConfig({ indexing: { autoIndexMinIntervalMs: 5_000 } }).indexing.autoIndexMinIntervalMs).toBe(5_000);
+        expect(parseConfig({ indexing: { autoIndexMinIntervalMs: 0 } }).indexing.autoIndexMinIntervalMs).toBe(0);
+        expect(parseConfig({ indexing: { autoIndexMinIntervalMs: -10 } }).indexing.autoIndexMinIntervalMs).toBe(0);
+        expect(parseConfig({ indexing: { autoIndexMinIntervalMs: 700_000 } }).indexing.autoIndexMinIntervalMs).toBe(600_000);
+        expect(parseConfig({ indexing: { autoIndexMinIntervalMs: "30s" } }).indexing.autoIndexMinIntervalMs).toBe(30_000);
+      });
+
+      it("should parse and clamp autoIndexMaxChangedFiles", () => {
+        expect(parseConfig({ indexing: { autoIndexMaxChangedFiles: 500 } }).indexing.autoIndexMaxChangedFiles).toBe(500);
+        expect(parseConfig({ indexing: { autoIndexMaxChangedFiles: 0 } }).indexing.autoIndexMaxChangedFiles).toBe(0);
+        expect(parseConfig({ indexing: { autoIndexMaxChangedFiles: -1 } }).indexing.autoIndexMaxChangedFiles).toBe(0);
+        expect(parseConfig({ indexing: { autoIndexMaxChangedFiles: 1_000_000 } }).indexing.autoIndexMaxChangedFiles).toBe(100_000);
+        expect(parseConfig({ indexing: { autoIndexMaxChangedFiles: "many" } }).indexing.autoIndexMaxChangedFiles).toBe(250);
       });
     });
 
@@ -871,7 +889,7 @@ describe("config schema", () => {
     it("should return correct model for google", () => {
       const model = getDefaultModelForProvider("google");
       expect(model.provider).toBe("google");
-      expect(model.model).toBe("gemini-embedding-001");
+      expect(model.model).toBe("gemini-embedding-2");
       expect(model.dimensions).toBe(1536);
     });
 

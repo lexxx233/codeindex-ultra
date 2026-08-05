@@ -17,6 +17,7 @@ const createTestConfig = (overrides: Partial<ParsedCodebaseIndexConfig> = {}): P
     autoIndexWaitMs: 10_000,
     autoIndexMaxRetries: 5,
     autoIndexRetryDelayMs: 100,
+    autoIndexMinIntervalMs: 0,
     watchFiles: true,
     pauseBackgroundIndexingOnBattery: false,
     maxFileSize: 1048576,

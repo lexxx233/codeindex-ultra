@@ -24,6 +24,7 @@ export { isValidModel } from "./validators.js";
 export type IndexScope = "project" | "global";
 
 export interface IndexingConfig {
+  /** Run first-use and background automatic indexing. Default: true */
   autoIndex: boolean;
   /** Maximum time retrieval tools wait for first-use auto-indexing. */
   autoIndexWaitMs: number;
@@ -31,10 +32,22 @@ export interface IndexingConfig {
   autoIndexMaxRetries: number;
   /** Initial exponential retry delay after transient lock contention. */
   autoIndexRetryDelayMs: number;
+  /**
+   * Minimum delay between automatic (watcher/background-retrieval) indexing runs.
+   * Runs arriving sooner are coalesced into one run at the interval boundary.
+   * Manual runs bypass. Default: 30000 (30 seconds). 0 disables the minimum interval.
+   */
+  autoIndexMinIntervalMs: number;
+  /**
+   * Defer automatic indexing once more than this many files changed since the last
+   * completed run, pointing users at a manual index_codebase run instead.
+   * Manual runs bypass. Default: 250. 0 disables the guard.
+   */
+  autoIndexMaxChangedFiles: number;
   watchFiles: boolean;
   /**
-   * On macOS, defer automatic indexing while the computer is using battery power.
-   * Manual index requests are never blocked. Default: false
+   * On macOS, Linux, and Windows, defer automatic indexing while the computer is
+   * using battery power. Manual index requests are never blocked. Default: true
    */
   pauseBackgroundIndexingOnBattery: boolean;
   maxFileSize: number;
@@ -202,6 +215,12 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
     autoIndexRetryDelayMs: typeof rawIndexing.autoIndexRetryDelayMs === "number"
       ? Math.min(10_000, Math.max(10, Math.floor(rawIndexing.autoIndexRetryDelayMs)))
       : defaultIndexing.autoIndexRetryDelayMs,
+    autoIndexMinIntervalMs: typeof rawIndexing.autoIndexMinIntervalMs === "number"
+      ? Math.min(600_000, Math.max(0, Math.floor(rawIndexing.autoIndexMinIntervalMs)))
+      : defaultIndexing.autoIndexMinIntervalMs,
+    autoIndexMaxChangedFiles: typeof rawIndexing.autoIndexMaxChangedFiles === "number"
+      ? Math.min(100_000, Math.max(0, Math.floor(rawIndexing.autoIndexMaxChangedFiles)))
+      : defaultIndexing.autoIndexMaxChangedFiles,
     watchFiles: typeof rawIndexing.watchFiles === "boolean" ? rawIndexing.watchFiles : defaultIndexing.watchFiles,
     pauseBackgroundIndexingOnBattery: typeof rawIndexing.pauseBackgroundIndexingOnBattery === "boolean"
       ? rawIndexing.pauseBackgroundIndexingOnBattery

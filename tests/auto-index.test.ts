@@ -57,7 +57,7 @@ function stats(): IndexStats {
   };
 }
 
-function status(indexed: boolean): StatusResult {
+function status(indexed: boolean, failedBatchesCount = 0): StatusResult {
   return {
     indexed,
     vectorCount: indexed ? 1 : 0,
@@ -67,7 +67,7 @@ function status(indexed: boolean): StatusResult {
     currentBranch: "main",
     baseBranch: "main",
     compatibility: { compatible: true },
-    failedBatchesCount: 0,
+    failedBatchesCount,
   };
 }
 
@@ -88,6 +88,7 @@ function config(
       autoIndexWaitMs: 50,
       autoIndexMaxRetries: 2,
       autoIndexRetryDelayMs: 10,
+      autoIndexMinIntervalMs: 0,
       watchFiles: false,
       requireProjectMarker: true,
       ...indexingOverrides,
@@ -97,9 +98,11 @@ function config(
 
 class MockIndexer {
   readable = false;
+  failedBatchesCount = 0;
   freshness: IndexFreshnessResult = { readable: false, current: false, reason: "missing" };
-  getStatus = vi.fn(async () => status(this.readable));
+  getStatus = vi.fn(async () => status(this.readable, this.failedBatchesCount));
   getIndexFreshness = vi.fn(async () => this.freshness);
+  retryFailedBatches = vi.fn(async () => ({ succeeded: 0, failed: 0, remaining: this.failedBatchesCount }));
   index = vi.fn(async (onProgress?: (progress: IndexProgress) => void) => {
     onProgress?.({
       phase: "complete",
@@ -161,7 +164,7 @@ describe("auto-index coordinator", () => {
     expect(indexer.index).toHaveBeenCalledOnce();
   });
 
-  it("refreshes a readable stale Pi index before retrieval", async () => {
+  it("serves a readable stale index immediately and refreshes it in the background", async () => {
     const indexer = new MockIndexer();
     indexer.readable = true;
     indexer.freshness = { readable: true, current: false, reason: "files-changed" };
@@ -170,8 +173,32 @@ describe("auto-index coordinator", () => {
     const result = await waitForAutoIndexForRetrieval(projectRoot, "pi");
 
     expect(result).toEqual({ ready: true });
+    await vi.waitFor(() => expect(indexer.index).toHaveBeenCalledOnce());
+  });
+
+  it("blocks first-use retrieval while the first index builds", async () => {
+    const indexer = new MockIndexer();
+    const indexing = deferred<IndexStats>();
+    indexer.index.mockImplementation(async () => {
+      const result = await indexing.promise;
+      indexer.readable = true;
+      indexer.freshness = { readable: true, current: true, reason: "current" };
+      return result;
+    });
+    configureAutoIndex(projectRoot, "jcode", config({ autoIndexWaitMs: 1_000 }), () => indexer);
+
+    let settled = false;
+    const retrieval = waitForAutoIndexForRetrieval(projectRoot, "jcode")
+      .then((result) => {
+        settled = true;
+        return result;
+      });
+    await vi.waitFor(() => expect(indexer.index).toHaveBeenCalledOnce());
+    expect(settled).toBe(false);
+
+    indexing.resolve(stats());
+    await expect(retrieval).resolves.toEqual({ ready: true });
     expect(indexer.index).toHaveBeenCalledOnce();
-    expect(indexer.getIndexFreshness).toHaveBeenCalledTimes(3);
   });
 
   it("lets concurrent first retrievals await one in-flight job", async () => {
@@ -545,5 +572,116 @@ describe("auto-index coordinator", () => {
 
     expect(indexer.index).toHaveBeenCalledOnce();
     expect(getAutoIndexStatus(os.homedir(), "jcode").blockedReason).toBe("home-directory");
+  });
+
+  it("coalesces watcher re-indexes within the minimum interval", async () => {
+    vi.useFakeTimers();
+    const indexer = new MockIndexer();
+    configureAutoIndex(projectRoot, "jcode", config({ autoIndexMinIntervalMs: 30_000 }), () => indexer);
+
+    await expect(requestBackgroundIndex(projectRoot, "jcode", 1)).resolves.toMatchObject({ outcome: "ready" });
+    expect(indexer.index).toHaveBeenCalledTimes(1);
+
+    const second = requestBackgroundIndex(projectRoot, "jcode", 1);
+    const third = requestBackgroundIndex(projectRoot, "jcode", 1);
+    await vi.advanceTimersByTimeAsync(29_999);
+
+    expect(indexer.index).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(Promise.all([second, third])).resolves.toEqual([
+      expect.objectContaining({ outcome: "ready" }),
+      expect.objectContaining({ outcome: "ready" }),
+    ]);
+    expect(indexer.index).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets manual indexing bypass the minimum interval", async () => {
+    const indexer = new MockIndexer();
+    configureAutoIndex(projectRoot, "jcode", config({ autoIndexMinIntervalMs: 30_000 }), () => indexer);
+
+    await expect(requestBackgroundIndex(projectRoot, "jcode", 1)).resolves.toMatchObject({ outcome: "ready" });
+    await expect(runCoordinatedIndex(projectRoot, "jcode", true)).resolves.toMatchObject({ outcome: "ready" });
+
+    expect(indexer.forceIndex).toHaveBeenCalledTimes(1);
+    expect(indexer.index).toHaveBeenCalledTimes(2);
+  });
+
+  it("defers auto re-indexes once changed files exceed the guard and clears after a manual run", async () => {
+    const indexer = new MockIndexer();
+    configureAutoIndex(projectRoot, "jcode", config({ autoIndexMaxChangedFiles: 10 }), () => indexer);
+
+    const deferred = requestBackgroundIndex(projectRoot, "jcode", 12);
+    await vi.waitFor(() => {
+      expect(getAutoIndexStatus(projectRoot, "jcode").throttledReason).toBe(
+        "12 changed files exceed autoIndexMaxChangedFiles (10); run /index manually",
+      );
+    });
+    expect(indexer.index).not.toHaveBeenCalled();
+
+    await expect(runCoordinatedIndex(projectRoot, "jcode", false)).resolves.toMatchObject({ outcome: "ready" });
+    await expect(deferred).resolves.toMatchObject({ outcome: "ready" });
+
+    expect(indexer.index).toHaveBeenCalledTimes(2);
+    expect(getAutoIndexStatus(projectRoot, "jcode").throttledReason).toBeUndefined();
+
+    await expect(requestBackgroundIndex(projectRoot, "jcode", 9)).resolves.toMatchObject({ outcome: "ready" });
+    expect(indexer.index).toHaveBeenCalledTimes(3);
+  });
+
+  it("runs immediately when the changed-file guard is disabled", async () => {
+    const indexer = new MockIndexer();
+    configureAutoIndex(projectRoot, "jcode", config({ autoIndexMaxChangedFiles: 0 }), () => indexer);
+
+    await expect(requestBackgroundIndex(projectRoot, "jcode", 5_000)).resolves.toMatchObject({ outcome: "ready" });
+
+    expect(indexer.index).toHaveBeenCalledOnce();
+    expect(getAutoIndexStatus(projectRoot, "jcode").throttledReason).toBeUndefined();
+  });
+
+  it("retries persisted failed batches before automatic indexing", async () => {
+    const indexer = new MockIndexer();
+    indexer.failedBatchesCount = 2;
+    indexer.retryFailedBatches.mockImplementation(async () => {
+      indexer.failedBatchesCount = 0;
+      return { succeeded: 2, failed: 0, remaining: 0 };
+    });
+    configureAutoIndex(projectRoot, "jcode", config(), () => indexer);
+
+    await expect(startAutoIndex(projectRoot, "jcode")).resolves.toMatchObject({ outcome: "ready" });
+
+    expect(indexer.retryFailedBatches).toHaveBeenCalledOnce();
+    expect(indexer.index).toHaveBeenCalledOnce();
+    expect(indexer.retryFailedBatches.mock.invocationCallOrder[0]).toBeLessThan(
+      indexer.index.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("surfaces failed-batch retry errors through the auto-index status", async () => {
+    const indexer = new MockIndexer();
+    indexer.failedBatchesCount = 1;
+    indexer.retryFailedBatches.mockRejectedValue(new Error("provider exploded with /Users/secret/token"));
+    configureAutoIndex(projectRoot, "jcode", config(), () => indexer);
+
+    await expect(startAutoIndex(projectRoot, "jcode")).resolves.toMatchObject({ outcome: "failed" });
+
+    const snapshot = getAutoIndexStatus(projectRoot, "jcode");
+    expect(snapshot.state).toBe("failed");
+    expect(snapshot.lastError).toContain("embedding provider configuration");
+    expect(JSON.stringify(snapshot)).not.toContain("/Users/secret/token");
+    expect(indexer.index).not.toHaveBeenCalled();
+  });
+
+  it("exposes a last-run summary after a completed run", async () => {
+    const indexer = new MockIndexer();
+    configureAutoIndex(projectRoot, "jcode", config(), () => indexer);
+
+    await expect(startAutoIndex(projectRoot, "jcode")).resolves.toMatchObject({ outcome: "ready" });
+
+    expect(getAutoIndexStatus(projectRoot, "jcode").lastRun).toEqual({
+      totalFiles: stats().totalFiles,
+      indexedChunks: stats().indexedChunks,
+      durationMs: stats().durationMs,
+    });
   });
 });

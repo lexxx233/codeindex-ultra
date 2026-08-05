@@ -45,6 +45,16 @@ export interface AutoIndexStatusSnapshot {
   nextRetryAt?: string;
   progress?: AutoIndexProgressSnapshot;
   blockedReason?: "home-directory" | "project-marker-missing";
+  /** Set while automatic indexing is deferred by the battery power policy. */
+  pausedReason?: string;
+  /** Set while automatic indexing is deferred by the changed-file guard. */
+  throttledReason?: string;
+  /** Summary of the most recent completed indexing run. */
+  lastRun?: {
+    totalFiles: number;
+    indexedChunks: number;
+    durationMs: number;
+  };
 }
 
 export interface CoordinatedIndexResult {
@@ -62,7 +72,7 @@ export interface AutoIndexRetrievalResult {
 type CoordinatedIndexer = Pick<
   Indexer,
   "forceIndex" | "getStatus" | "index"
-> & Partial<Pick<Indexer, "getIndexFreshness">>;
+> & Partial<Pick<Indexer, "getIndexFreshness" | "retryFailedBatches">>;
 
 interface AutoIndexRegistration {
   backgroundIndexingPolicy: BackgroundIndexingPolicy | null;
@@ -74,7 +84,11 @@ interface AutoIndexRegistration {
 }
 
 interface IndexRequest {
+  /** Files reported changed with this request; already-coalesced merges carry 0. */
+  changedFiles: number;
   checkFreshness: boolean;
+  /** Requests that tolerate being merged at the autoIndexMinIntervalMs boundary. */
+  coalesce: boolean;
   force: boolean;
   onProgress?: (progress: IndexProgress) => void;
   source: AutoIndexSource;
@@ -209,7 +223,9 @@ function mergeRequests(current: IndexRequest | null, next: IndexRequest): IndexR
   if (!current) return next;
   const preferred = requestPriority(next) > requestPriority(current) ? next : current;
   return {
+    changedFiles: 0,
     checkFreshness: current.checkFreshness && next.checkFreshness,
+    coalesce: current.coalesce && next.coalesce,
     force: current.force || next.force,
     onProgress: next.onProgress ?? current.onProgress,
     source: preferred.source,
@@ -231,6 +247,14 @@ class AutoIndexCoordinator {
   private pendingFollowUp: Promise<CoordinatedIndexResult> | null = null;
   private abortController: AbortController | null = null;
   private stopped = false;
+  private lastRunCompletedAtMs = 0;
+  private throttleTimer: ReturnType<typeof setTimeout> | null = null;
+  private throttledRun: Promise<CoordinatedIndexResult> | null = null;
+  private resolveThrottledRun: ((result: CoordinatedIndexResult) => void) | null = null;
+  private changedFilesSinceLastRun = 0;
+  private changedFilesDeferred: Promise<CoordinatedIndexResult> | null = null;
+  private changedFilesDeferredRequest: IndexRequest | null = null;
+  private resolveChangedFilesDeferral: (() => void) | null = null;
 
   constructor(registration: AutoIndexRegistration) {
     this.registration = registration;
@@ -263,6 +287,8 @@ class AutoIndexCoordinator {
     if (pauseOnBatteryChanged) {
       this.cancelBatteryRetry();
     }
+    this.refreshThrottleGuard();
+    this.releaseChangedFilesDeferral();
   }
 
   activateAfter(activation: Promise<void>): void {
@@ -271,22 +297,34 @@ class AutoIndexCoordinator {
 
   snapshot(): AutoIndexStatusSnapshot {
     this.refreshSafety();
+    this.refreshThrottleGuard();
     return {
       ...this.status,
       progress: this.status.progress ? { ...this.status.progress } : undefined,
+      lastRun: this.status.lastRun ? { ...this.status.lastRun } : undefined,
     };
   }
 
-  start(source: "startup" | "retrieval"): Promise<CoordinatedIndexResult> | null {
+  start(source: "startup" | "retrieval", options: { coalesce?: boolean } = {}): Promise<CoordinatedIndexResult> | null {
     this.refreshSafety();
     if (!this.registration.config.indexing.autoIndex || !this.registration.safeToRun) return null;
     if (this.status.state === "failed") return this.inFlight;
-    return this.request({ checkFreshness: true, force: false, source });
+    return this.request({
+      changedFiles: 0,
+      checkFreshness: true,
+      coalesce: options.coalesce === true,
+      force: false,
+      source,
+    });
   }
 
   request(request: IndexRequest): Promise<CoordinatedIndexResult> {
     if (this.stopped) {
       return Promise.resolve({ outcome: "stopped" });
+    }
+    if (request.source === "watcher" && request.changedFiles > 0) {
+      this.changedFilesSinceLastRun += request.changedFiles;
+      this.refreshThrottleGuard();
     }
     return this.activation.then(() => this.enqueueBatteryAwareRequest(request));
   }
@@ -317,6 +355,24 @@ class AutoIndexCoordinator {
   private enqueueRequest(request: IndexRequest): Promise<CoordinatedIndexResult> {
     if (this.stopped || !this.canRun(request)) {
       return Promise.resolve({ outcome: "stopped" });
+    }
+    if (this.shouldDeferForChangedFiles(request)) {
+      this.changedFilesDeferredRequest = mergeRequests(this.changedFilesDeferredRequest, request);
+      this.refreshThrottleGuard();
+      if (this.changedFilesDeferred) {
+        return this.changedFilesDeferred;
+      }
+      const deferred = this.waitForChangedFileGuard();
+      this.changedFilesDeferred = deferred;
+      void deferred.then(
+        () => this.finishChangedFilesDeferral(deferred),
+        () => this.finishChangedFilesDeferral(deferred),
+      );
+      return deferred;
+    }
+    if (!this.inFlight && this.shouldThrottleStart(request)) {
+      this.pendingRequest = mergeRequests(this.pendingRequest, request);
+      return this.scheduleThrottledRun();
     }
     if (this.inFlight) {
       if (request.force && !this.activeRequest?.force) {
@@ -357,13 +413,18 @@ class AutoIndexCoordinator {
     this.stopped = true;
     this.batteryDeferredRequest = null;
     this.cancelBatteryRetry();
+    this.cancelThrottleRun();
+    this.changedFilesDeferredRequest = null;
+    this.releaseChangedFilesDeferral();
     this.pendingRequest = null;
     this.abortController?.abort();
     this.setState("stopped", {
       completedAt: now(),
       nextRetryAt: undefined,
+      pausedReason: undefined,
       progress: undefined,
       retryAttempt: undefined,
+      throttledReason: undefined,
     });
     const inFlight = this.inFlight;
     if (inFlight) {
@@ -382,11 +443,17 @@ class AutoIndexCoordinator {
     this.activeRequest = request;
     const job = this.run(request);
     this.inFlight = job;
-    void job.then(() => {
+    void job.then((result) => {
       if (this.inFlight !== job) return;
       this.inFlight = null;
       this.activeRequest = null;
       this.abortController = null;
+      this.lastRunCompletedAtMs = Date.now();
+      if (result.outcome === "ready" && !result.skipped) {
+        this.changedFilesSinceLastRun = 0;
+        this.refreshThrottleGuard();
+        this.releaseChangedFilesDeferral();
+      }
       if (this.batteryIndexJob === job) {
         this.batteryIndexJob = null;
         this.batteryCheck = null;
@@ -444,6 +511,8 @@ class AutoIndexCoordinator {
           }
         }
 
+        await this.retryFailedBatchesBeforeRun(indexer, request);
+        this.throwIfCancelled(controller.signal);
         this.setState("indexing", {
           nextRetryAt: undefined,
           retryAttempt: retryAttempt > 0 ? retryAttempt : undefined,
@@ -478,6 +547,11 @@ class AutoIndexCoordinator {
         }
         this.setState("ready", {
           completedAt: now(),
+          lastRun: {
+            totalFiles: stats.totalFiles,
+            indexedChunks: stats.indexedChunks,
+            durationMs: stats.durationMs,
+          },
           progress: this.status.progress
             ? { ...this.status.progress, phase: "complete", percentage: 100 }
             : undefined,
@@ -573,6 +647,119 @@ class AutoIndexCoordinator {
     }
   }
 
+  private async retryFailedBatchesBeforeRun(
+    indexer: CoordinatedIndexer,
+    request: IndexRequest,
+  ): Promise<void> {
+    if (request.source === "manual" || !indexer.retryFailedBatches) return;
+    const status = await indexer.getStatus();
+    if (status.failedBatchesCount === 0) return;
+    await indexer.retryFailedBatches();
+  }
+
+  private shouldThrottleStart(request: IndexRequest): boolean {
+    if (!request.coalesce) return false;
+    if (this.throttledRun) return true;
+    const intervalMs = this.registration.config.indexing.autoIndexMinIntervalMs;
+    if (intervalMs <= 0 || this.lastRunCompletedAtMs === 0) return false;
+    return Date.now() - this.lastRunCompletedAtMs < intervalMs;
+  }
+
+  private scheduleThrottledRun(): Promise<CoordinatedIndexResult> {
+    if (this.throttledRun) return this.throttledRun;
+    const intervalMs = this.registration.config.indexing.autoIndexMinIntervalMs;
+    const delayMs = Math.max(0, this.lastRunCompletedAtMs + intervalMs - Date.now());
+    const run = new Promise<CoordinatedIndexResult>((resolve) => {
+      const timer = setTimeout(() => {
+        this.throttleTimer = null;
+        this.throttledRun = null;
+        this.resolveThrottledRun = null;
+        const pending = this.pendingRequest;
+        this.pendingRequest = null;
+        if (this.stopped || !pending) {
+          resolve({ outcome: "stopped" });
+          return;
+        }
+        resolve(this.request(pending));
+      }, delayMs);
+      timer.unref?.();
+      this.throttleTimer = timer;
+      this.resolveThrottledRun = resolve;
+    });
+    this.throttledRun = run;
+    return run;
+  }
+
+  private cancelThrottleRun(): void {
+    if (this.throttleTimer) {
+      clearTimeout(this.throttleTimer);
+      this.throttleTimer = null;
+    }
+    this.throttledRun = null;
+    const resolve = this.resolveThrottledRun;
+    this.resolveThrottledRun = null;
+    resolve?.({ outcome: "stopped" });
+  }
+
+  private changedFileGuardExceeded(): boolean {
+    const max = this.registration.config.indexing.autoIndexMaxChangedFiles;
+    return max > 0 && this.changedFilesSinceLastRun > max;
+  }
+
+  private shouldDeferForChangedFiles(request: IndexRequest): boolean {
+    if (request.source === "manual" || request.force) return false;
+    return this.changedFileGuardExceeded();
+  }
+
+  private refreshThrottleGuard(): void {
+    let reason: string | undefined;
+    if (this.changedFileGuardExceeded()) {
+      const max = this.registration.config.indexing.autoIndexMaxChangedFiles;
+      reason = `${this.changedFilesSinceLastRun} changed files exceed autoIndexMaxChangedFiles (${max}); run /index manually`;
+    }
+    if (this.status.throttledReason !== reason) {
+      this.status.throttledReason = reason;
+      this.status.updatedAt = now();
+    }
+  }
+
+  private setPausedReason(reason?: string): void {
+    if (this.status.pausedReason === reason) return;
+    this.status.pausedReason = reason;
+    this.status.updatedAt = now();
+  }
+
+  private async waitForChangedFileGuard(): Promise<CoordinatedIndexResult> {
+    while (!this.stopped) {
+      this.refreshThrottleGuard();
+      if (!this.changedFileGuardExceeded()) {
+        const request = this.changedFilesDeferredRequest;
+        this.changedFilesDeferredRequest = null;
+        if (!request) return { outcome: "stopped" };
+        return this.enqueueRequest(request);
+      }
+      await this.waitForChangedFilesSignal();
+    }
+    return { outcome: "stopped" };
+  }
+
+  private waitForChangedFilesSignal(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.resolveChangedFilesDeferral = resolve;
+    });
+  }
+
+  private releaseChangedFilesDeferral(): void {
+    const resolve = this.resolveChangedFilesDeferral;
+    this.resolveChangedFilesDeferral = null;
+    resolve?.();
+  }
+
+  private finishChangedFilesDeferral(deferred: Promise<CoordinatedIndexResult>): void {
+    if (this.changedFilesDeferred !== deferred) return;
+    this.changedFilesDeferred = null;
+  }
+
   private canRun(request: IndexRequest): boolean {
     this.refreshSafety();
     if (request.source === "manual" || request.source === "watcher") {
@@ -591,6 +778,7 @@ class AutoIndexCoordinator {
     while (!this.stopped) {
       const policy = this.registration.backgroundIndexingPolicy;
       if (!policy || !await this.isBatteryPauseActive(policy)) {
+        this.setPausedReason(undefined);
         const request = this.batteryDeferredRequest;
         this.batteryDeferredRequest = null;
         if (!request) return { outcome: "stopped" };
@@ -600,6 +788,7 @@ class AutoIndexCoordinator {
         }
         return job;
       }
+      this.setPausedReason("paused: on battery power");
       await this.waitForBatteryRetry(policy.recheckDelayMs);
     }
     return { outcome: "stopped" };
@@ -712,9 +901,12 @@ export function startAutoIndex(
 export function requestBackgroundIndex(
   projectRoot: string,
   host: HostMode,
+  changedFiles = 0,
 ): Promise<CoordinatedIndexResult> | null {
   return getCoordinator(projectRoot, host)?.request({
+    changedFiles,
     checkFreshness: false,
+    coalesce: true,
     force: false,
     source: "watcher",
   }) ?? null;
@@ -727,7 +919,9 @@ export function runCoordinatedIndex(
   onProgress?: (progress: IndexProgress) => void,
 ): Promise<CoordinatedIndexResult> | null {
   return getCoordinator(projectRoot, host)?.request({
+    changedFiles: 0,
     checkFreshness: !force,
+    coalesce: false,
     force,
     onProgress,
     source: "manual",
@@ -766,19 +960,30 @@ export async function waitForAutoIndexForRetrieval(
     };
   }
 
+  let existingIndex = false;
   try {
-    if (await hasReadableCurrentIndex(coordinator)) return { ready: true };
+    const indexState = await readIndexState(coordinator);
+    if (indexState.current) return { ready: true };
+    existingIndex = indexState.readable;
   } catch {
     // The coordinator reports a sanitized actionable failure below.
   }
 
-  const job = coordinator.start("retrieval") ?? coordinator.currentJob();
+  const job = coordinator.start("retrieval", { coalesce: existingIndex }) ?? coordinator.currentJob();
+  if (existingIndex) {
+    // A readable stale index serves retrieval while the refresh runs in the background.
+    // Incompatible indexes fall through to the bounded first-use wait so the failure
+    // state surfaces instead of a silently wrong-index response.
+    if (job) void job.then(() => undefined, () => undefined);
+    return { ready: true };
+  }
+
   if (job) {
     await withTimeout(job, coordinator.getWaitMs());
   }
 
   try {
-    if (await hasReadableCurrentIndex(coordinator)) return { ready: true };
+    if ((await readIndexState(coordinator)).current) return { ready: true };
   } catch {
     // The coordinator reports a sanitized actionable failure below.
   }
@@ -821,11 +1026,14 @@ export async function resetAutoIndexCoordinatorsForTests(): Promise<void> {
   coordinatorReplacementBarriers.clear();
 }
 
-async function hasReadableCurrentIndex(coordinator: AutoIndexCoordinator): Promise<boolean> {
+async function readIndexState(coordinator: AutoIndexCoordinator): Promise<{ current: boolean; readable: boolean }> {
   const indexer = coordinator.getIndexer();
   if (indexer.getIndexFreshness) {
     const freshness = await indexer.getIndexFreshness();
-    return freshness.readable && freshness.current;
+    // An incompatible index cannot serve retrieval; treat it like a missing first-use index.
+    const usable = freshness.readable && freshness.reason !== "incompatible";
+    return { current: usable && freshness.current, readable: usable };
   }
-  return (await indexer.getStatus()).indexed;
+  const indexed = (await indexer.getStatus()).indexed;
+  return { current: indexed, readable: indexed };
 }

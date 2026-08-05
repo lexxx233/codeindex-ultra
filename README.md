@@ -155,7 +155,7 @@ OpenCode project config lives at `.opencode/codebase-index.json`. Codex, Pi, and
   "embeddingProvider": "auto",
   "scope": "project",
   "indexing": {
-    "autoIndex": false,
+    "autoIndex": true,
     "watchFiles": true,
     "requireProjectMarker": true,
     "semanticOnly": false

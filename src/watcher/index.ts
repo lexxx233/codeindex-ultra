@@ -38,9 +38,9 @@ export function createWatcherWithIndexer(
   const configPaths = getConfigPaths(projectRoot, host, options);
   configureAutoIndex(projectRoot, host, parseConfig(config), getIndexer);
   let stopped = false;
-  const requestReindex = () => {
+  const requestReindex = (changedFiles = 0) => {
     if (stopped) return;
-    void requestBackgroundIndex(projectRoot, host)?.then((result) => {
+    void requestBackgroundIndex(projectRoot, host, changedFiles)?.then((result) => {
       if (result.outcome === "failed") {
         console.error("[codebase-index] Background reindex failed. Check index_status for details.");
       }
@@ -61,7 +61,7 @@ export function createWatcherWithIndexer(
           configureAutoIndex(projectRoot, host, refreshedConfig, getIndexer);
         }
       }
-      requestReindex();
+      requestReindex(changes.length);
     }
   });
 

@@ -119,12 +119,14 @@ Changing provider, model, dimensions, or embedding strategy can make an existing
 
 | Option | Default | Purpose |
 |---|---:|---|
-| `autoIndex` | `false` | Run first-use automatic indexing for retrieval tools |
+| `autoIndex` | `true` | Run first-use automatic indexing for retrieval tools |
 | `autoIndexWaitMs` | `10000` | Maximum first-use wait time |
 | `autoIndexMaxRetries` | `5` | Transient lock retries |
 | `autoIndexRetryDelayMs` | `100` | Initial retry delay |
+| `autoIndexMinIntervalMs` | `30000` | Minimum delay between automatic runs; watcher/background runs are coalesced at the interval boundary |
+| `autoIndexMaxChangedFiles` | `250` | Defer automatic runs once more files than this changed since the last run; `0` disables |
 | `watchFiles` | `true` | Watch files and branches for incremental updates |
-| `pauseBackgroundIndexingOnBattery` | `false` | On macOS, defer automatic background indexing on battery |
+| `pauseBackgroundIndexingOnBattery` | `true` | On macOS, Linux, and Windows, defer automatic background indexing on battery |
 | `maxFileSize` | `1048576` | Maximum file size in bytes |
 | `maxChunksPerFile` | `100` | Maximum semantic chunks per file |
 | `semanticOnly` | `false` | Skip generic blocks and keep semantic chunks |
@@ -144,7 +146,7 @@ Example:
 ```json
 {
   "indexing": {
-    "autoIndex": false,
+    "autoIndex": true,
     "watchFiles": true,
     "maxFileSize": 1048576,
     "maxChunksPerFile": 100,
@@ -261,9 +263,9 @@ Debug defaults:
   "embeddingProvider": "auto",
   "scope": "project",
   "indexing": {
-    "autoIndex": false,
+    "autoIndex": true,
     "watchFiles": true,
-    "pauseBackgroundIndexingOnBattery": false,
+    "pauseBackgroundIndexingOnBattery": true,
     "maxFileSize": 1048576,
     "maxChunksPerFile": 100,
     "semanticOnly": false,

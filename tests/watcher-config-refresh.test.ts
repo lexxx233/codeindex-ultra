@@ -49,7 +49,7 @@ function createLinkedWorktreeWatcher(root: string, writeMainConfig = true) {
   const watcher = createWatcherWithIndexer(
     () => indexer,
     worktreeDir,
-    parseConfig({ include: ["**/*.ts"] }),
+    parseConfig({ include: ["**/*.ts"], indexing: { autoIndexMinIntervalMs: 0 } }),
     "opencode",
   );
   return { configPath, indexer, watcher, worktreeDir };
@@ -98,7 +98,7 @@ describe("watcher config refresh", () => {
     const watcher = createWatcherWithIndexer(
       () => indexer,
       tempDir,
-      parseConfig({ include: ["**/*.ts"] }),
+      parseConfig({ include: ["**/*.ts"], indexing: { autoIndexMinIntervalMs: 0 } }),
       "codex",
     );
 
@@ -126,7 +126,7 @@ describe("watcher config refresh", () => {
     const watcher = createWatcherWithIndexer(
       () => indexer,
       tempDir,
-      parseConfig({ include: ["**/*.ts"] }),
+      parseConfig({ include: ["**/*.ts"], indexing: { autoIndexMinIntervalMs: 0 } }),
       "jcode",
     );
 
@@ -156,7 +156,7 @@ describe("watcher config refresh", () => {
     const watcher = createWatcherWithIndexer(
       () => indexer,
       tempDir,
-      parseConfig({ include: ["**/*.ts"] }),
+      parseConfig({ include: ["**/*.ts"], indexing: { autoIndexMinIntervalMs: 0 } }),
       "codex",
     );
 
@@ -188,7 +188,7 @@ describe("watcher config refresh", () => {
     const watcher = createWatcherWithIndexer(
       () => indexer,
       tempDir,
-      parseConfig({ include: ["**/*.ts"] }),
+      parseConfig({ include: ["**/*.ts"], indexing: { autoIndexMinIntervalMs: 0 } }),
       "jcode",
     );
 
@@ -331,7 +331,7 @@ describe("watcher config refresh", () => {
     const watcher = createWatcherWithIndexer(
       () => indexer,
       projectRoot,
-      parseConfig({ include: ["**/*.ts"] }),
+      parseConfig({ include: ["**/*.ts"], indexing: { autoIndexMinIntervalMs: 0 } }),
       "codex",
       { configPath },
     );
@@ -366,7 +366,7 @@ describe("watcher config refresh", () => {
     const watcher = createWatcherWithIndexer(
       () => indexer,
       projectRoot,
-      parseConfig({ include: ["**/*.ts"] }),
+      parseConfig({ include: ["**/*.ts"], indexing: { autoIndexMinIntervalMs: 0 } }),
       "codex",
       { configPath },
     );
