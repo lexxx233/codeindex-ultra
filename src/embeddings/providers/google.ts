@@ -18,8 +18,10 @@ export class GoogleEmbeddingProvider extends BaseEmbeddingProvider<EmbeddingProv
   }
 
   public async embedQuery(query: string): Promise<EmbeddingResult> {
-    const taskType = this.modelInfo.taskAble ? "CODE_RETRIEVAL_QUERY" : undefined;
-    const result = await this.embedWithTaskType([query], taskType);
+    const result = await this.embedWithTaskType(
+      [this.applyTaskPrefix(query, "query")],
+      this.resolveTaskType("query")
+    );
     return {
       embedding: result.embeddings[0],
       tokensUsed: result.totalTokensUsed,
@@ -27,8 +29,10 @@ export class GoogleEmbeddingProvider extends BaseEmbeddingProvider<EmbeddingProv
   }
 
   public async embedDocument(document: string): Promise<EmbeddingResult> {
-    const taskType = this.modelInfo.taskAble ? "RETRIEVAL_DOCUMENT" : undefined;
-    const result = await this.embedWithTaskType([document], taskType);
+    const result = await this.embedWithTaskType(
+      [this.applyTaskPrefix(document, "document")],
+      this.resolveTaskType("document")
+    );
     return {
       embedding: result.embeddings[0],
       tokensUsed: result.totalTokensUsed,
@@ -36,8 +40,32 @@ export class GoogleEmbeddingProvider extends BaseEmbeddingProvider<EmbeddingProv
   }
 
   public async embedBatch(texts: string[]): Promise<EmbeddingBatchResult> {
-    const taskType = this.modelInfo.taskAble ? "RETRIEVAL_DOCUMENT" : undefined;
-    return this.embedWithTaskType(texts, taskType);
+    const taskType = this.resolveTaskType("document");
+    return this.embedWithTaskType(
+      texts.map((text) => this.applyTaskPrefix(text, "document")),
+      taskType
+    );
+  }
+
+  // gemini-embedding-2 (and future prompt-prefixed models) declare `taskPrefix`
+  // in the catalog instead of using the taskType API parameter, which the v2
+  // model rejects. Prefixes follow the documented asymmetric retrieval format:
+  // queries get `task: ... | query: ...`, documents get `title: ... | text: ...`.
+  private applyTaskPrefix(text: string, kind: "query" | "document"): string {
+    if (!("taskPrefix" in this.modelInfo) || !this.modelInfo.taskPrefix) {
+      return text;
+    }
+    return this.modelInfo.taskPrefix[kind] + text;
+  }
+
+  private resolveTaskType(kind: "query" | "document"): string | undefined {
+    if ("taskPrefix" in this.modelInfo) {
+      return undefined;
+    }
+    if (!("taskAble" in this.modelInfo) || !this.modelInfo.taskAble) {
+      return undefined;
+    }
+    return kind === "query" ? "CODE_RETRIEVAL_QUERY" : "RETRIEVAL_DOCUMENT";
   }
 
   private async embedWithTaskType(

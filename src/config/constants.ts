@@ -58,6 +58,22 @@ export const EMBEDDING_MODELS = {
       costPer1MTokens: 0.15,
       taskAble: true,
     },
+    "gemini-embedding-2": {
+      provider: "google",
+      model: "gemini-embedding-2",
+      // MRL flexible 128-3072; 1536 matches the other providers' storage layout.
+      // Unlike 001, v2 auto-normalizes truncated dimensions.
+      dimensions: 1536,
+      maxTokens: 8192,
+      costPer1MTokens: 0.2,
+      taskAble: false,
+      // gemini-embedding-2 rejects the taskType API parameter; the task must be
+      // embedded as a text prefix instead. See: https://ai.google.dev/gemini-api/docs/embeddings
+      taskPrefix: {
+        query: "task: code retrieval | query: ",
+        document: "title: none | text: ",
+      },
+    },
   },
   "openai": {
     "text-embedding-3-small": {
