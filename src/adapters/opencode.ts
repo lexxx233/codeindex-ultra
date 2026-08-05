@@ -85,6 +85,13 @@ function resolveProjectRoot(directory: string, worktree?: string): string {
     return worktree;
   }
 
+  // Some hosts launch with the filesystem root as the working directory.
+  // Writing index storage there fails with EROFS on macOS, so fall back to
+  // the process cwd instead.
+  if (!directory || directory === path.parse(directory).root) {
+    return process.cwd();
+  }
+
   return directory;
 }
 
@@ -98,6 +105,10 @@ interface ChatTransformOutput {
 }
 
 const plugin: Plugin = async ({ directory, worktree }) => {
+  console.error(
+    `[codebase-index] plugin init directory=${JSON.stringify(directory)} ` +
+    `worktree=${JSON.stringify(worktree)} cwd=${JSON.stringify(process.cwd())}`
+  );
   try {
     const projectRoot = resolveProjectRoot(directory, worktree);
     const rawConfig = loadMergedConfig(projectRoot, "opencode");
