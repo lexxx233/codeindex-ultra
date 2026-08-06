@@ -75,7 +75,7 @@ src/
 ├── watcher/                    # File and Git branch watchers
 ├── eval/                       # Retrieval evaluation CLI, datasets, metrics, and reports
 ├── rerank/                     # Optional external reranking
-├── utils/                      # Files, paths, logging, metrics, power state, and helpers
+├── utils/                      # Files, paths, logging, metrics, and helpers
 ├── identity-catalog.json       # Current/future product and package identities
 └── package-metadata.ts         # Runtime package metadata helpers
 
@@ -321,7 +321,7 @@ Non-OpenCode hosts retain fallbacks to existing OpenCode paths for compatibility
 Key config groups in `src/config/schema.ts` include:
 
 - embedding provider/model and custom provider settings
-- `indexing`watching, semantic-only mode, project markers, battery behavior, batching
+- `indexing`watching, semantic-only mode, project markers, batching
 - `search`hybrid fusion, limits, ranking, and related options
 - `reranker`optional external reranking
 - `debug`logging and metrics

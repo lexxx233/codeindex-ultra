@@ -363,7 +363,7 @@ describe("tools utils", () => {
       expect(result).toContain("INDEX WARNING");
       expect(result).toContain("semantic search remains available");
     });
-    it("should append auto-index pause, throttle, and last-run details", () => {
+    it("should append auto-index throttle and last-run details", () => {
       const status = {
         indexed: true,
         vectorCount: 100,
@@ -379,14 +379,12 @@ describe("tools utils", () => {
           state: "ready" as const,
           updatedAt: "2026-08-05T00:00:00.000Z",
           completedAt: "2026-08-05T00:00:01.000Z",
-          pausedReason: "paused: on battery power",
           throttledReason: "300 changed files exceed autoIndexMaxChangedFiles (250); run /index manually",
           lastRun: { totalFiles: 300, indexedChunks: 1200, durationMs: 4500 },
         },
       };
       const result = formatStatus(status);
 
-      expect(result).toContain("Auto-index paused: on battery power");
       expect(result).toContain(
         "Auto-index throttled: 300 changed files exceed autoIndexMaxChangedFiles (250); run /index manually",
       );

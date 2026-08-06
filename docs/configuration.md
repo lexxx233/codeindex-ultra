@@ -126,7 +126,6 @@ Changing provider, model, dimensions, or embedding strategy can make an existing
 | `autoIndexMinIntervalMs` | `30000` | Minimum delay between automatic runs; watcher/background runs are coalesced at the interval boundary |
 | `autoIndexMaxChangedFiles` | `250` | Defer automatic runs once more files than this changed since the last run; `0` disables |
 | `watchFiles` | `true` | Watch files and branches for incremental updates |
-| `pauseBackgroundIndexingOnBattery` | `true` | On macOS, Linux, and Windows, defer automatic background indexing on battery |
 | `maxFileSize` | `1048576` | Maximum file size in bytes |
 | `maxChunksPerFile` | `100` | Maximum semantic chunks per file |
 | `semanticOnly` | `false` | Skip generic blocks and keep semantic chunks |
@@ -265,7 +264,6 @@ Debug defaults:
   "indexing": {
     "autoIndex": true,
     "watchFiles": true,
-    "pauseBackgroundIndexingOnBattery": true,
     "maxFileSize": 1048576,
     "maxChunksPerFile": 100,
     "semanticOnly": false,

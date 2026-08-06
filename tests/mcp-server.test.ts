@@ -1013,13 +1013,9 @@ describe("MCP server tools and prompts", () => {
     expect(content[0].text).toContain("failed-batches.json");
   });
 
-  it("keeps manual MCP indexing available when battery pausing is enabled", async () => {
+  it("keeps manual MCP indexing available", async () => {
     await client.close();
-    const config = parseConfig({
-      indexing: {
-        pauseBackgroundIndexingOnBattery: true,
-      },
-    });
+    const config = parseConfig({});
     server = createMcpServer("/tmp/test-project", config, "opencode");
     client = new Client({ name: "test-client", version: "1.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

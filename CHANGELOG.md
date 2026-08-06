@@ -9,7 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Cross-platform battery detection**: Automatic background indexing now pauses on battery power on Linux (`/sys/class/power_supply`) and Windows (`Win32_Battery`) in addition to macOS (`pmset`), with fail-open behavior when detection fails.
 - **Auto-index minimum interval**: `indexing.autoIndexMinIntervalMs` (default `30000`, clamp `0..600000`) coalesces back-to-back watcher- and background-retrieval-triggered re-indexes into one run at the interval boundary. Manual runs bypass the throttle.
 - **Auto-index changed-file guard**: `indexing.autoIndexMaxChangedFiles` (default `250`, clamp `0..100000`, `0` disables) defers automatic runs once the watcher reports more changed files since the last completed run, surfacing a `throttledReason` in `index_status` that points at a manual re-index. Manual runs bypass the guard.
 - **Failed-batch auto-retry**: Before a new automatic indexing run starts, persisted failed embedding batches are retried through the existing locked retry-failed-batches flow; failures surface through the auto-index status like other run failures.
@@ -18,8 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Auto-index on by default**: `indexing.autoIndex` now defaults to `true`. Set it to `false` to keep the previous opt-in behavior.
-- **Battery pause on by default**: `indexing.pauseBackgroundIndexingOnBattery` now defaults to `true`.
 - **Google default embedding model**: The default model for `embeddingProvider: "google"` is now `gemini-embedding-2` (was `gemini-embedding-001`). Existing indexes built with `gemini-embedding-001` report a provider/model incompatibility and require `/index force` (or `index_codebase` with `force: true`) to rebuild.
+
+### Removed
+
+- **Battery-pause indexing option**: `indexing.pauseBackgroundIndexingOnBattery` and the background power-source policy have been removed. Automatic indexing never defers on battery power; index freshness is the primary guarantee.
 
 ### Fixed
 

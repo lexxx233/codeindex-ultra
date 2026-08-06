@@ -14,7 +14,6 @@ export function getDefaultIndexingConfig(): IndexingConfig {
     autoIndexMinIntervalMs: 30_000,
     autoIndexMaxChangedFiles: 250,
     watchFiles: true,
-    pauseBackgroundIndexingOnBattery: true,
     maxFileSize: 1048576,
     maxChunksPerFile: 100,
     semanticOnly: false,

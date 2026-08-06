@@ -45,11 +45,6 @@ export interface IndexingConfig {
    */
   autoIndexMaxChangedFiles: number;
   watchFiles: boolean;
-  /**
-   * On macOS, Linux, and Windows, defer automatic indexing while the computer is
-   * using battery power. Manual index requests are never blocked. Default: true
-   */
-  pauseBackgroundIndexingOnBattery: boolean;
   maxFileSize: number;
   maxChunksPerFile: number;
   semanticOnly: boolean;
@@ -222,9 +217,6 @@ export function parseConfig(raw: unknown): ParsedCodebaseIndexConfig {
       ? Math.min(100_000, Math.max(0, Math.floor(rawIndexing.autoIndexMaxChangedFiles)))
       : defaultIndexing.autoIndexMaxChangedFiles,
     watchFiles: typeof rawIndexing.watchFiles === "boolean" ? rawIndexing.watchFiles : defaultIndexing.watchFiles,
-    pauseBackgroundIndexingOnBattery: typeof rawIndexing.pauseBackgroundIndexingOnBattery === "boolean"
-      ? rawIndexing.pauseBackgroundIndexingOnBattery
-      : defaultIndexing.pauseBackgroundIndexingOnBattery,
     maxFileSize: typeof rawIndexing.maxFileSize === "number" ? rawIndexing.maxFileSize : defaultIndexing.maxFileSize,
     maxChunksPerFile: typeof rawIndexing.maxChunksPerFile === "number" ? Math.max(1, rawIndexing.maxChunksPerFile) : defaultIndexing.maxChunksPerFile,
     semanticOnly: typeof rawIndexing.semanticOnly === "boolean" ? rawIndexing.semanticOnly : defaultIndexing.semanticOnly,

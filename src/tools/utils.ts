@@ -181,7 +181,6 @@ function formatAutoIndexStatus(status: IndexStatusResult["autoIndex"]): string[]
   if (status.completedAt) lines.push(`Auto-index completed: ${status.completedAt}`);
   if (status.errorAt) lines.push(`Auto-index error time: ${status.errorAt}`);
   if (status.lastError) lines.push(`Auto-index error: ${status.lastError}`);
-  if (status.pausedReason) lines.push(`Auto-index ${status.pausedReason}`);
   if (status.throttledReason) lines.push(`Auto-index throttled: ${status.throttledReason}`);
   if (status.lastRun) {
     lines.push(
