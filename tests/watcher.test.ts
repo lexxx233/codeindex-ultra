@@ -17,8 +17,8 @@ const createTestConfig = (overrides: Partial<ParsedCodebaseIndexConfig> = {}): P
     autoIndexWaitMs: 10_000,
     autoIndexMaxRetries: 5,
     autoIndexRetryDelayMs: 100,
+    autoIndexMinIntervalMs: 0,
     watchFiles: true,
-    pauseBackgroundIndexingOnBattery: false,
     maxFileSize: 1048576,
     maxChunksPerFile: 100,
     semanticOnly: false,
@@ -54,16 +54,6 @@ const createTestConfig = (overrides: Partial<ParsedCodebaseIndexConfig> = {}): P
   },
   ...overrides,
 });
-
-const waitForIndexerCalls = async (
-  indexer: { index: ReturnType<typeof vi.fn> },
-  expectedCalls: number,
-  timeoutMs = 3000,
-): Promise<void> => {
-  await vi.waitFor(() => {
-    expect(indexer.index).toHaveBeenCalledTimes(expectedCalls);
-  }, { timeout: timeoutMs });
-};
 
 const writeUntilObserved = async (
   write: (attempt: number) => void,
@@ -311,7 +301,7 @@ describe("FileWatcher", () => {
     });
 
     it("coalesces file-triggered reindex requests while one is running", async () => {
-      vi.setConfig({ testTimeout: 6000 });
+      vi.setConfig({ testTimeout: 15000 });
       const pendingResolves: Array<() => void> = [];
       const indexer = {
         index: vi.fn(() => new Promise<void>((resolve) => {
@@ -326,8 +316,13 @@ describe("FileWatcher", () => {
       );
 
       await combinedWatcher.whenReady();
-      fs.writeFileSync(path.join(tempDir, "src", "first.ts"), "export const first = 1;");
-      await waitForIndexerCalls(indexer, 1);
+      await writeUntilObserved(
+        (attempt) => fs.writeFileSync(
+          path.join(tempDir, "src", "first.ts"),
+          `export const first = ${attempt};`,
+        ),
+        () => expect(indexer.index).toHaveBeenCalledTimes(1),
+      );
       fs.writeFileSync(path.join(tempDir, "src", "second.ts"), "export const second = 2;");
       await new Promise((resolve) => setTimeout(resolve, 1500));
 

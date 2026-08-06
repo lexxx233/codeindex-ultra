@@ -443,7 +443,7 @@ describe("MCP server tools and prompts", () => {
       filePaths: [],
     };
 
-    const config = parseConfig({ effectivenessMetrics: { enabled: true } });
+    const config = parseConfig({ effectivenessMetrics: { enabled: true }, indexing: { autoIndex: false } });
     server = createMcpServer("/tmp/test-project", config, "opencode");
     client = new Client({ name: "test-client", version: "1.0.0" });
 
@@ -708,7 +708,7 @@ describe("MCP server tools and prompts", () => {
   it("should preserve Jcode host token, outcome, single-count, and reset parity", async () => {
     const jcodeServer = createMcpServer(
       "/tmp/jcode-test-project",
-      parseConfig({ effectivenessMetrics: { enabled: true } }),
+      parseConfig({ effectivenessMetrics: { enabled: true }, indexing: { autoIndex: false } }),
       "jcode",
     );
     const jcodeClient = new Client({ name: "jcode-test-client", version: "1.0.0" });
@@ -1013,13 +1013,9 @@ describe("MCP server tools and prompts", () => {
     expect(content[0].text).toContain("failed-batches.json");
   });
 
-  it("keeps manual MCP indexing available when battery pausing is enabled", async () => {
+  it("keeps manual MCP indexing available", async () => {
     await client.close();
-    const config = parseConfig({
-      indexing: {
-        pauseBackgroundIndexingOnBattery: true,
-      },
-    });
+    const config = parseConfig({});
     server = createMcpServer("/tmp/test-project", config, "opencode");
     client = new Client({ name: "test-client", version: "1.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

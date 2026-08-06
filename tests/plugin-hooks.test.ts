@@ -17,7 +17,6 @@ const mockState = vi.hoisted(() => ({
       autoIndexMaxRetries: 0,
       autoIndexRetryDelayMs: 10,
       watchFiles: false,
-      pauseBackgroundIndexingOnBattery: false,
       requireProjectMarker: true,
     },
   },
@@ -124,7 +123,6 @@ describe("plugin routing hint hook selection", () => {
         autoIndexMaxRetries: 0,
         autoIndexRetryDelayMs: 10,
         watchFiles: false,
-        pauseBackgroundIndexingOnBattery: false,
         requireProjectMarker: true,
       },
     };

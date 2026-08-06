@@ -7,12 +7,13 @@ import type {
 
 export function getDefaultIndexingConfig(): IndexingConfig {
   return {
-    autoIndex: false,
+    autoIndex: true,
     autoIndexWaitMs: 10_000,
     autoIndexMaxRetries: 5,
     autoIndexRetryDelayMs: 100,
+    autoIndexMinIntervalMs: 30_000,
+    autoIndexMaxChangedFiles: 250,
     watchFiles: true,
-    pauseBackgroundIndexingOnBattery: false,
     maxFileSize: 1048576,
     maxChunksPerFile: 100,
     semanticOnly: false,
